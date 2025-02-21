@@ -1,5 +1,4 @@
 # DataOnTips
-DataOnTips
 DataOnTips is a JavaFX-based disaster data aggregation and visualization software that provides real-time and historical disaster insights. It integrates with a MySQL database to store and retrieve disaster records, allowing users to explore disaster trends, view affected locations, and export data for analysis.
 
 Features

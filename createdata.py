@@ -38,10 +38,10 @@ for year in range(2010, 2024):
 
 # Database connection
 conn = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="Rithu@1826",
-    database="data"
+    host="hostname",
+    user="username",
+    password="pswd",
+    database="databasename"
 )
 cursor = conn.cursor()
 

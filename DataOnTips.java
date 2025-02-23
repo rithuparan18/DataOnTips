@@ -1,14 +1,18 @@
 package programs;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 import javafx.stage.Stage;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.sql.*;
 
 public class DataOnTips extends Application {
@@ -16,6 +20,7 @@ public class DataOnTips extends Application {
     private static final String DB_URL = "jdbc:mysql://localhost:3307/data";
     private static final String USER = "root";
     private static final String PASS = "Rithu@1826";
+    private static final String LIVE_API_URL = "https://eonet.gsfc.nasa.gov/api/v2.1/events";
 
     @Override
     public void start(Stage primaryStage) {
@@ -23,47 +28,49 @@ public class DataOnTips extends Application {
         rootLayout.setStyle("-fx-background-color: #33b2ff; -fx-padding: 20;");
         rootLayout.setAlignment(Pos.TOP_CENTER);
 
-        // Title
         Label titleLabel = new Label("DataOnTips");
         titleLabel.setStyle("-fx-font-size: 32px; -fx-font-weight: bold; -fx-text-fill: black;");
         rootLayout.getChildren().add(titleLabel);
 
-        // Disaster List
         ListView<String> disasterListView = new ListView<>();
         disasterListView.setPrefHeight(200);
+        loadDisasterTypes(disasterListView);
 
-        try (Connection conn = DriverManager.getConnection(DB_URL, USER, PASS);
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT DISTINCT Disaster_Type FROM disasters")) {
-
-            while (rs.next()) {
-                String disasterType = rs.getString("Disaster_Type");
-                disasterListView.getItems().add(disasterType);
+        disasterListView.setOnMouseClicked(e -> {
+            String selectedType = disasterListView.getSelectionModel().getSelectedItem();
+            if (selectedType != null) {
+                openWindow("Details for " + selectedType, layout -> setupDisasterDetailsWindow(layout, selectedType));
             }
+        });
 
-            disasterListView.setOnMouseClicked(e -> {
-                String selectedType = disasterListView.getSelectionModel().getSelectedItem();
-                if (selectedType != null) {
-                    openWindow("Details for " + selectedType, layout -> setupDisasterDetailsWindow(layout, selectedType));
-                }
-            });
-
-        } catch (SQLException e) {
-            e.printStackTrace();
-            disasterListView.getItems().add("Error retrieving data.");
-        }
-
-        rootLayout.getChildren().add(disasterListView);
-
-        // Export Button on main page (if needed, otherwise remove if only per disaster type is required)
-        Button exportButton = new Button("Download Data");
+        // Export Button for All Data
+        Button exportButton = new Button("Download All Data");
         exportButton.setOnAction(e -> exportToCSV());
-        rootLayout.getChildren().add(exportButton);
+
+        // Live Data Button
+        Button liveDataButton = new Button("Fetch Live Disasters");
+        liveDataButton.setOnAction(e -> openWindow("Live Disaster Data", this::setupLiveDisasterWindow));
+
+        rootLayout.getChildren().addAll(disasterListView, exportButton, liveDataButton);
 
         Scene scene = new Scene(rootLayout, 500, 500);
         primaryStage.setTitle("DataOnTips");
         primaryStage.setScene(scene);
         primaryStage.show();
+    }
+
+    private void loadDisasterTypes(ListView<String> listView) {
+        try (Connection conn = DriverManager.getConnection(DB_URL, USER, PASS);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT DISTINCT Disaster_Type FROM disasters")) {
+
+            while (rs.next()) {
+                listView.getItems().add(rs.getString("Disaster_Type"));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            listView.getItems().add("⚠️ Error retrieving data.");
+        }
     }
 
     private void setupDisasterDetailsWindow(VBox layout, String disasterType) {
@@ -89,11 +96,10 @@ public class DataOnTips extends Application {
                 placesList.getItems().add(location + " - " + date);
             }
 
-            // When a location is clicked, extract only the location part (before " - ")
+            // Clicking a place opens more details
             placesList.setOnMouseClicked(e -> {
                 String selectedItem = placesList.getSelectionModel().getSelectedItem();
                 if (selectedItem != null) {
-                    // Split the string to get only the location
                     String location = selectedItem.split(" - ")[0];
                     openWindow("Details for " + location, l -> setupPlaceDetailsWindow(l, location));
                 }
@@ -101,20 +107,18 @@ public class DataOnTips extends Application {
 
         } catch (SQLException e) {
             e.printStackTrace();
-            placesList.getItems().add("No information available.");
+            placesList.getItems().add("⚠️ No information available.");
         }
 
-        // Add the places list and Export button to this disaster window
+        // Export Button for Specific Disaster Type
         Button exportButton = new Button("Download Data");
         exportButton.setOnAction(e -> exportToCSV(disasterType));
-        layout.getChildren().addAll(placesList, exportButton);
 
-        // Exit Button
         Button exitButton = new Button("Exit");
         exitButton.setOnAction(e -> ((Stage) layout.getScene().getWindow()).close());
-        layout.getChildren().add(exitButton);
-    }
 
+        layout.getChildren().addAll(placesList, exportButton, exitButton);
+    }
     private void setupPlaceDetailsWindow(VBox layout, String place) {
         layout.setStyle("-fx-background-color: #33b2ff; -fx-padding: 20;");
         layout.setAlignment(Pos.TOP_CENTER);
@@ -124,6 +128,7 @@ public class DataOnTips extends Application {
         layout.getChildren().add(label);
 
         Label detailsLabel = new Label();
+        
         try (Connection conn = DriverManager.getConnection(DB_URL, USER, PASS);
              PreparedStatement stmt = conn.prepareStatement("SELECT * FROM disasters WHERE Location = ?")) {
 
@@ -131,35 +136,126 @@ public class DataOnTips extends Application {
             ResultSet rs = stmt.executeQuery();
 
             if (rs.next()) {
-                String details = "Location: " + rs.getString("Location") + "\n" +
-                        "Disaster Type: " + rs.getString("Disaster_Type") + "\n" +
-                        "Disaster Subtype: " + rs.getString("Disaster_Subtype") + "\n" +
-                        "Disaster Date: " + rs.getDate("Disaster_Date").toString() + "\n" +
-                        "Total Deaths: " + rs.getInt("Total_Deaths");
+                String details = "📍 Location: " + rs.getString("Location") + "\n" +
+                                 "🌊 Disaster Type: " + rs.getString("Disaster_Type") + "\n" +
+                                 "📌 Subtype: " + rs.getString("Disaster_Subtype") + "\n" +
+                                 "📅 Date: " + rs.getDate("Disaster_Date").toString() + "\n" +
+                                 "☠️ Total Deaths: " + rs.getInt("Total_Deaths");
                 detailsLabel.setText(details);
             } else {
-                detailsLabel.setText("No detailed information available.");
+                detailsLabel.setText("⚠️ No detailed information available.");
             }
         } catch (SQLException e) {
             e.printStackTrace();
-            detailsLabel.setText("Error retrieving details.");
+            detailsLabel.setText("⚠️ Error retrieving details.");
         }
 
         layout.getChildren().add(detailsLabel);
 
-        // Exit Button
         Button exitButton = new Button("Exit");
         exitButton.setOnAction(e -> ((Stage) layout.getScene().getWindow()).close());
         layout.getChildren().add(exitButton);
     }
 
+
+    private void setupLiveDisasterWindow(VBox layout) {
+        layout.setStyle("-fx-background-color: #33b2ff; -fx-padding: 20;");
+        layout.setAlignment(Pos.TOP_CENTER);
+
+        Label label = new Label("Live Disaster Data");
+        label.setStyle("-fx-font-size: 20px; -fx-text-fill: black;");
+        layout.getChildren().add(label);
+
+        ListView<String> liveDataList = new ListView<>();
+        liveDataList.setPrefHeight(200);
+        layout.getChildren().add(liveDataList);
+
+        // Show loading message
+        liveDataList.getItems().add("Fetching live data...");
+
+        // Run API call in a background thread
+        new Thread(() -> {
+            try {
+                URL url = new URL(LIVE_API_URL);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+
+                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder content = new StringBuilder();
+                String inputLine;
+                while ((inputLine = in.readLine()) != null) {
+                    content.append(inputLine);
+                }
+                in.close();
+                conn.disconnect();
+
+                JSONObject jsonResponse = new JSONObject(content.toString());
+                JSONArray events = jsonResponse.getJSONArray("events");
+
+                Platform.runLater(() -> {
+                    liveDataList.getItems().clear(); // Clear loading message
+                    if (events.length() == 0) {
+                        liveDataList.getItems().add("⚠️ No live disasters available.");
+                    } else {
+                        for (int i = 0; i < events.length(); i++) {
+                            JSONObject event = events.getJSONObject(i);
+                            liveDataList.getItems().add(event.getString("title"));
+                        }
+                    }
+                });
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                Platform.runLater(() -> {
+                    liveDataList.getItems().clear();
+                    liveDataList.getItems().add("⚠️ Error fetching live data.");
+                });
+            }
+        }).start();
+    }
+
+
+ // Export ALL disasters to a CSV file
+    private void exportToCSV() {
+        String fileName = "all_disasters_data.csv";
+
+        try (FileWriter fileWriter = new FileWriter(fileName)) {
+            fileWriter.write("Disaster ID,Disaster Date,Disaster Type,Disaster Subtype,Location,Total Deaths\n");
+
+            try (Connection conn = DriverManager.getConnection(DB_URL, USER, PASS);
+                 PreparedStatement stmt = conn.prepareStatement("SELECT * FROM disasters")) {
+
+                ResultSet rs = stmt.executeQuery();
+
+                while (rs.next()) {
+                    String line = rs.getInt("Disaster_ID") + "," +
+                            rs.getDate("Disaster_Date") + "," +
+                            rs.getString("Disaster_Type") + "," +
+                            rs.getString("Disaster_Subtype") + "," +
+                            rs.getString("Location") + "," +
+                            rs.getInt("Total_Deaths") + "\n";
+                    fileWriter.write(line);
+                }
+            }
+
+            showAlert("Export Successful", "All disaster data saved to " + fileName);
+
+        } catch (IOException | SQLException e) {
+            e.printStackTrace();
+            showAlert("Export Failed", "An error occurred while exporting data.");
+        }
+    }
+
+    // Export data for a SPECIFIC disaster type
     private void exportToCSV(String disasterType) {
-        String fileName = disasterType + "_data.csv";
+        String fileName = disasterType.replaceAll("\\s+", "_") + "_data.csv";
+
         try (FileWriter fileWriter = new FileWriter(fileName)) {
             fileWriter.write("Disaster ID,Disaster Date,Disaster Type,Disaster Subtype,Location,Total Deaths\n");
 
             try (Connection conn = DriverManager.getConnection(DB_URL, USER, PASS);
                  PreparedStatement stmt = conn.prepareStatement("SELECT * FROM disasters WHERE Disaster_Type = ?")) {
+
                 stmt.setString(1, disasterType);
                 ResultSet rs = stmt.executeQuery();
 
@@ -173,38 +269,24 @@ public class DataOnTips extends Application {
                     fileWriter.write(line);
                 }
             }
-            System.out.println("Data exported to " + fileName);
-            // Print absolute path for debugging:
-            java.io.File file = new java.io.File(fileName);
-            System.out.println("File saved at: " + file.getAbsolutePath());
+
+            showAlert("Export Successful", "Data for " + disasterType + " saved to " + fileName);
+
         } catch (IOException | SQLException e) {
             e.printStackTrace();
+            showAlert("Export Failed", "An error occurred while exporting data.");
         }
     }
 
 
-    // This method is used to export all data from the main page (if needed)
-    private void exportToCSV() {
-        try (FileWriter fileWriter = new FileWriter("disaster_data.csv")) {
-            fileWriter.write("Disaster ID,Disaster Date,Disaster Type,Disaster Subtype,Location,Total Deaths\n");
-
-            try (Connection conn = DriverManager.getConnection(DB_URL, USER, PASS);
-                 PreparedStatement stmt = conn.prepareStatement("SELECT * FROM disasters")) {
-                ResultSet rs = stmt.executeQuery();
-                while (rs.next()) {
-                    String line = rs.getInt("Disaster_ID") + "," +
-                            rs.getDate("Disaster_Date") + "," +
-                            rs.getString("Disaster_Type") + "," +
-                            rs.getString("Disaster_Subtype") + "," +
-                            rs.getString("Location") + "," +
-                            rs.getInt("Total_Deaths") + "\n";
-                    fileWriter.write(line);
-                }
-            }
-            System.out.println("Data exported to disaster_data.csv");
-        } catch (IOException | SQLException e) {
-            e.printStackTrace();
-        }
+    private void showAlert(String title, String message) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle(title);
+            alert.setHeaderText(null);
+            alert.setContentText(message);
+            alert.showAndWait();
+        });
     }
 
     private void openWindow(String title, WindowSetup setup) {

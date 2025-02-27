@@ -51,7 +51,11 @@ public class DataOnTips extends Application {
         Button liveDataButton = new Button("Fetch Live Disasters");
         liveDataButton.setOnAction(e -> openWindow("Live Disaster Data", this::setupLiveDisasterWindow));
 
-        rootLayout.getChildren().addAll(disasterListView, exportButton, liveDataButton);
+        // Exit Button
+        Button exitButton = new Button("Exit");
+        exitButton.setOnAction(e -> Platform.exit());
+        
+        rootLayout.getChildren().addAll(disasterListView, exportButton, liveDataButton, exitButton);
 
         Scene scene = new Scene(rootLayout, 500, 500);
         primaryStage.setTitle("DataOnTips");
